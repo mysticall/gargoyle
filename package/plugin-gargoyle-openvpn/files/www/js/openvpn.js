@@ -214,12 +214,13 @@ function saveChanges()
 
 		// if anything in server section or client section has changed, restart openvpn
 		// otherwise we're just adding client certs to a server and restart shouldn't be needed
+		// unless we are adding/removing a client with a routed subnet, then we should give openvpn a kick to push the server routes
 		var openvpnCurrentlyRunning = (tunIp != "" && openvpnProc != "" && (remotePing != "" || openvpnConfig == "server"))
 		if(openvpnConfig == "disabled")
 		{
 			commands = "/etc/init.d/openvpn stop ; " + commands
 		}
-		else if(commands.match(/uci.*openvpn_gargoyle\.server\./) || openvpnConfig == "client" || (!openvpnCurrentlyRunning) )
+		else if(commands.match(/uci.*openvpn_gargoyle\.server\./) || commands.match(/uci.*openvpn_gargoyle.*subnet_ip/) || openvpnConfig == "client" || (!openvpnCurrentlyRunning) )
 		{
 			commands = commands + "/etc/init.d/openvpn restart ; sleep 3 ; "
 		}
@@ -429,8 +430,8 @@ function resetData()
 	var serverKeysize = uciOriginal.get("openvpn_gargoyle", "server", "keysize")
 	if(serverCipher == "")
 	{
-		serverCipher = "BF-CBC"
-		serverKeysize = "128"
+		serverCipher = "AES-256-CBC"
+		serverKeysize = ""
 	}
 	serverCipher = serverKeysize == "" ? serverCipher : serverCipher + ":" + serverKeysize
 
@@ -454,16 +455,23 @@ function resetData()
 		var subnetMask = uciOriginal.get("openvpn_gargoyle", id, "subnet_mask")
 		var enabled     = uciOriginal.get("openvpn_gargoyle", id, "enabled")
 		var subnet = subnetIp != "" && subnetMask != "" ? subnetIp + "/" + subnetMask : ""
+		var vpngateway = uciOriginal.get("openvpn_gargoyle", id, "prefer_vpngateway") == "1" ? "vpn_gateway" : uciOriginal.get('openvpn_gargoyle', 'server', 'internal_ip');
 
 		var ipElementContainer = document.createElement("span")
 		var naContainer = document.createElement("span")
 		var ipContainer = document.createElement("span")
+		var vpngwContainer = document.createElement("span")
+		naContainer.appendChild( document.createTextNode("---") )
+		naContainer.appendChild( document.createElement("br") )
 		naContainer.appendChild( document.createTextNode("---") )
 		ipContainer.appendChild( document.createTextNode(ip) )
 		ipContainer.appendChild( document.createElement("br") )
 		ipContainer.appendChild( document.createTextNode(subnet) )
+		vpngwContainer.appendChild( document.createElement("br") )
+		vpngwContainer.appendChild( document.createTextNode(vpngateway) )
 		ipElementContainer.appendChild(naContainer)
 		ipElementContainer.appendChild(ipContainer)
+		ipElementContainer.appendChild(vpngwContainer)
 		ipElementContainer.id = id
 		
 
@@ -483,7 +491,7 @@ function resetData()
 		acTableData.push(rowData)
 	}
 
-	var acTable = createTable([ ovpnS.ClntN, ovpnS.IntIP, UI.Enabled, ovpnS.CfgCredF, ""], acTableData, "openvpn_allowed_client_table", true, false, removeAcCallback)
+	var acTable = createTable([ ovpnS.ClntN, ovpnS.IntIP, UI.Enabled, ovpnS.CfgCredFM, ovpnS.CfgCredFS, ""], acTableData, "openvpn_allowed_client_table", true, false, removeAcCallback)
 	var tableContainer = document.getElementById("openvpn_allowed_client_table_container");
 	while(tableContainer.firstChild != null)
 	{
@@ -644,7 +652,7 @@ function updateClientConfigTextFromControls()
 	var configLines = document.getElementById("openvpn_client_conf_text").value.split(/[\r\n]+/);
 	var newLines = [];
 	var foundVars = [];
-	var defaultCipher = cipher == "Blowfish-CBC" && keysize == "128" ? true : false;
+	var defaultCipher = cipher == "AES-256-CBC" ? true : false;
 	while(configLines.length >0)
 	{
 		var line = configLines.shift();
@@ -721,17 +729,19 @@ function createAllowedClientControls(haveDownload)
 
 	var enabledCheck = createInput("checkbox")
 	enabledCheck.onclick = toggleAcEnabled;
-	var downloadButton = haveDownload ? createButton(ovpnS.Dload, "btn btn-default", downloadAc, false) : createButton(ovpnS.Dload, "btn btn-default disabled", function(){ return; }, true ) ;
-	var editButton     = createButton(UI.Edit,     "btn btn-default", editAc, false)
+	var downloadButtonMulti = haveDownload ? createButton(ovpnS.Dload, "btn-download", downloadAcMulti, false) : createButton(ovpnS.Dload, "btn-download disabled", function(){ return; }, true ) ;
+	var downloadButtonSingle = haveDownload ? createButton(ovpnS.Dload, "btn-download", downloadAcSingle, false) : createButton(ovpnS.Dload, "btn-download disabled", function(){ return; }, true ) ;
 
-	return [enabledCheck, downloadButton, editButton]
+	var editButton = createButton(UI.Edit, "btn-edit", editAc, false)
+
+	return [enabledCheck, downloadButtonMulti, downloadButtonSingle, editButton]
 }
 
 function createButton(text, cssClass, actionFunction, disabled)
 {
 	var button = createInput("button")
-	button.value = text
-	button.className=cssClass
+	button.textContent = text
+	button.className = "btn btn-default " + cssClass
 	button.onclick = actionFunction
 	button.disabled = disabled
 	return button;
@@ -823,7 +833,7 @@ function setOpenvpnVisibility()
 			var ipChildIndex;
 			for(ipChildIndex=0; ipChildIndex < ipElementContainer.childNodes.length ; ipChildIndex++)
 			{
-				ipElementContainer.childNodes[ipChildIndex].style.display = (ipChildIndex == 0 && dupeCn) || (ipChildIndex > 0 && (!dupeCn)) ? "inline" : "none"
+				ipElementContainer.childNodes[ipChildIndex].style.display = ((ipChildIndex == 0 || ipChildIndex == 2) && dupeCn) || (ipChildIndex > 0 && (!dupeCn)) ? "inline" : "none"
 			}
 
 		}
@@ -995,14 +1005,14 @@ function setAcDocumentFromUci(controlDocument, srcUci, id, dupeCn, serverInterna
 
 	var subnetIp   = srcUci.get("openvpn_gargoyle", id, "subnet_ip")
 	var subnetMask = srcUci.get("openvpn_gargoyle", id, "subnet_mask")
+	var preferVpnGateway = srcUci.get("openvpn_gargoyle", id, "prefer_vpngateway") == 1 ? true : false;
 
 	setSelectedValue("openvpn_allowed_client_have_subnet", (subnetIp != "" && subnetMask != "" ? "true" : "false"), controlDocument)
 	subnetIp   = subnetIp   == "" ? "192.168.2.1" : subnetIp;
 	subnetMask = subnetMask == "" ? "255.255.255.0" : subnetMask;
 	controlDocument.getElementById("openvpn_allowed_client_subnet_ip").value = subnetIp
 	controlDocument.getElementById("openvpn_allowed_client_subnet_mask").value = subnetMask
-
-
+	controlDocument.getElementById("openvpn_allowed_client_prefer_vpngateway").checked = preferVpnGateway;
 
 	initializeAllowedClientVisibility(controlDocument, dupeCn)
 }
@@ -1072,6 +1082,7 @@ function setAcUciFromDocument(controlDocument, id)
 	haveSubnet     = ipContainer.style.display == "none" ? false : haveSubnet
 	var subnetIp   = controlDocument.getElementById("openvpn_allowed_client_subnet_ip").value
 	var subnetMask = controlDocument.getElementById("openvpn_allowed_client_subnet_mask").value
+	var prefer_vpngateway = controlDocument.getElementById("openvpn_allowed_client_prefer_vpngateway").checked == true ? "1" : "0";
 
 	var pkg = "openvpn_gargoyle"
 	uci.set(pkg, id, "", "allowed_client")
@@ -1091,6 +1102,7 @@ function setAcUciFromDocument(controlDocument, id)
 		uci.set(pkg, id, "subnet_ip",   subnetIp)
 		uci.set(pkg, id, "subnet_mask", subnetMask)
 	}
+	uci.set(pkg, id, "prefer_vpngateway", prefer_vpngateway)
 }
 
 function getNumericIp(ip)
@@ -1165,9 +1177,9 @@ function validateAc(controlDocument, internalServerIp, internalServerMask)
 function toggleAcEnabled()
 {
 	var toggleRow=this.parentNode.parentNode;
-	var toggleId = editRow.childNodes[1].firstChild.id;
+	var toggleId = toggleRow.childNodes[1].firstChild.id;
 
-	uci.set("openvpn_gargoyle", id, "enabled", (this.checked? "true" : "false"));
+	uci.set("openvpn_gargoyle", toggleId, "enabled", (this.checked? "true" : "false"));
 }
 
 
@@ -1196,6 +1208,7 @@ function addAc()
 			subnetMask = document.getElementById("openvpn_allowed_client_subnet_mask").value
 		}
 		var subnet = subnetIp != "" && subnetMask != "" ? subnetIp + "/" + subnetMask : ""
+		var vpngateway = document.getElementById("openvpn_allowed_client_prefer_vpngateway").checked == true ? "vpn_gateway" : uciOriginal.get('openvpn_gargoyle', 'server', 'internal_ip');
 	
 		var id = name.replace(/[\t\r\n ]+/g, "_").toLowerCase().replace(/[^a-z0-9_-]/g, "");
 		var idCount = 1;
@@ -1214,12 +1227,18 @@ function addAc()
 		var ipElementContainer = document.createElement("span")
 		var naContainer = document.createElement("span")
 		var ipContainer = document.createElement("span")
+		var vpngwContainer = document.createElement("span")
+		naContainer.appendChild( document.createTextNode("---") )
+		naContainer.appendChild( document.createElement("br") )
 		naContainer.appendChild( document.createTextNode("---") )
 		ipContainer.appendChild( document.createTextNode(ip) )
 		ipContainer.appendChild( document.createElement("br") )
 		ipContainer.appendChild( document.createTextNode(subnet) )
+		vpngwContainer.appendChild( document.createElement("br") )
+		vpngwContainer.appendChild( document.createTextNode(vpngateway) )
 		ipElementContainer.appendChild(naContainer)
 		ipElementContainer.appendChild(ipContainer)
+		ipElementContainer.appendChild(vpngwContainer)
 		ipElementContainer.id = id
 
 		var acTable = document.getElementById("openvpn_allowed_client_table");
@@ -1243,15 +1262,21 @@ function addAc()
 
 }
 
-
-function downloadAc()
+function downloadAcMulti()
 {
 	var downloadRow=this.parentNode.parentNode;
 	var downloadId = downloadRow.childNodes[1].firstChild.id;
-	window.location="/utility/openvpn_download_credentials.sh?id=" + downloadId
+	var confType = "multiple-files"
+	window.location="/utility/openvpn_download_credentials.sh?id=" + downloadId + "&configtype=" + confType
 }
 
-
+function downloadAcSingle()
+{
+	var downloadRow=this.parentNode.parentNode;
+	var downloadId = downloadRow.childNodes[1].firstChild.id;
+	var confType = "single-ovpn"
+	window.location="/utility/openvpn_download_credentials.sh?id=" + downloadId + "&configtype=" + confType
+}
 
 function editAc()
 {
@@ -1268,26 +1293,14 @@ function editAc()
 	}
 
 	
-	try
-	{
-		xCoor = window.screenX + 225;
-		yCoor = window.screenY+ 225;
-	}
-	catch(e)
-	{
-		xCoor = window.left + 225;
-		yCoor = window.top + 225;
-	}
-
-
-	editAcWindow = window.open("openvpn_allowed_client_edit.sh", "edit", "width=560,height=600,left=" + xCoor + ",top=" + yCoor );
+	editAcWindow = openPopupWindow("openvpn_allowed_client_edit.sh", "edit", 560, 600);
 	
 	var saveButton = createInput("button", editAcWindow.document);
 	var closeButton = createInput("button", editAcWindow.document);
-	saveButton.value = UI.CApplyChanges;
-	saveButton.className = "btn btn-default btn-lg";
-	closeButton.value = UI.CDiscardChanges;
-	closeButton.className = "btn btn-default btn-lg";
+	saveButton.textContent = UI.CApplyChanges;
+	saveButton.className = "btn btn-primary";
+	closeButton.textContent = UI.CDiscardChanges;
+	closeButton.className = "btn btn-warning";
 
 	var editRow=this.parentNode.parentNode;
 	var editId = editRow.childNodes[1].firstChild.id;
@@ -1334,6 +1347,7 @@ function editAc()
 							subnetMask = editAcWindow.document.getElementById("openvpn_allowed_client_subnet_mask").value
 						}
 						var subnet = subnetIp != "" && subnetMask != "" ? subnetIp + "/" + subnetMask : ""
+						var vpngateway = editAcWindow.document.getElementById("openvpn_allowed_client_prefer_vpngateway").checked == true ? "vpn_gateway" : uciOriginal.get('openvpn_gargoyle', 'server', 'internal_ip');
 
 
 						setAcUciFromDocument(editAcWindow.document, editId)
@@ -1348,12 +1362,18 @@ function editAc()
 						var ipElementContainer = document.createElement("span")
 						var naContainer = document.createElement("span")
 						var ipContainer = document.createElement("span")
+						var vpngwContainer = document.createElement("span")
+						naContainer.appendChild( document.createTextNode("---") )
+						naContainer.appendChild( document.createElement("br") )
 						naContainer.appendChild( document.createTextNode("---") )
 						ipContainer.appendChild( document.createTextNode(ip) )
 						ipContainer.appendChild( document.createElement("br") )
 						ipContainer.appendChild( document.createTextNode(subnet) )
+						vpngwContainer.appendChild( document.createElement("br") )
+						vpngwContainer.appendChild( document.createTextNode(vpngateway) )
 						ipElementContainer.appendChild(naContainer)
 						ipElementContainer.appendChild(ipContainer)
+						ipElementContainer.appendChild(vpngwContainer)
 						ipElementContainer.id = editId
 
 						while( editRow.childNodes[1].firstChild != null)
@@ -1367,7 +1387,6 @@ function editAc()
 						editAcWindow.close();
 					}
 				}
-				editAcWindow.moveTo(xCoor,yCoor);
 				editAcWindow.focus();
 				updateDone = true;
 				

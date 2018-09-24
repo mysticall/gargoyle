@@ -37,19 +37,21 @@
 
 			<div class="panel-body">
 				<div class="row form-group">
-					<span class="col-xs-12" id="add_quota_label" style="text-decoration:underline"><%~ AddQuota %>:</span>
-					<div>
+					<span class="col-xs-12">
+						<span id="add_quota_label" style="text-decoration:underline"><%~ AddQuota %>:</span>
 						<%in templates/quotas_template %>
-					</div>
-					<span class="col-xs-12"><button id="add_quota_button" class="btn btn-default" onclick="addNewQuota()"><%~ AddQuota %></button></span>
+						<button id="add_quota_button" class="btn btn-default btn-add" onclick="addNewQuota()"><%~ AddQuota %></button>
+					</span>
 				</div>
 
 				<div id="internal_divider1" class="internal_divider"></div>
 
 				<div class="row form-group">
-					<span class="col-xs-12" id="active_quotas_label" style="text-decoration:underline"><%~ ActivQuotas %>:</span>
+					<span class="col-xs-12">
+						<span id="active_quotas_label" style="text-decoration:underline"><%~ ActivQuotas %>:</span>
+						<div id="quota_table_container" class="table-responsive"></div>
+					</span>
 				</div>
-				<div id="quota_table_container" class="table-responsive"></div>
 			</div>
 		</div>
 	</div>
@@ -59,9 +61,7 @@
 	<button id="save_button" class="btn btn-primary btn-lg" onclick="saveChanges()"><%~ SaveChanges %></button>
 	<button id="reset_button" class="btn btn-warning btn-lg" onclick="resetData()"><%~ Reset %></button>
 </div>
-<span id="update_container" ><%~ WaitSettings %></span>
 
-<!-- <br /><textarea style="margin-left:20px;" rows=30 cols=60 id="output"></textarea> -->
 
 <script>
 <!--
