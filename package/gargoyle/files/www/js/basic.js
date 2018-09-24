@@ -18,6 +18,7 @@ var openDnsFS = ["208.67.222.123", "208.67.220.123" ];
 var nortonCSA = ["199.85.126.10", "199.85.127.10" ];
 var nortonCSB = ["199.85.126.20", "199.85.127.20" ];
 var nortonCSC = ["199.85.126.30", "199.85.127.30" ];
+var quad9DNS = ["9.9.9.9", "149.112.112.112" ];
 
 var ncDns  = [ "178.32.31.41", "106.187.47.17", "176.58.118.172" ]
 var onDns  = [ "66.244.95.20", "95.211.32.162", "95.142.171.235" ]
@@ -491,7 +492,7 @@ function saveChanges()
 			var t=true;
 			var minutesToSeconds = function(value){return value*60;};
 			var lowerCase = function(value) { return value.toLowerCase(); }
-			var ifCustomMac = function(value){ return (document.getElementById('wan_use_mac').checked == true); };
+			var ifCustomMac = function(value){ return (document.getElementById('wan_use_mac').checked == true) || (defaultWanMac != currentWanMac); };
 			var ifCustomMtu = function(value){ return (document.getElementById('wan_use_mtu').checked == true &&  document.getElementById('wan_mtu').value != 1500);};
 			var ifHiddenChecked =  function(value) { return getSelectedValue('wifi_hidden') == "disabled" ? 1 : 0;}; //the label is for "broadcast", so disabled means it is hidden
 			var ifIsolateChecked = function(value) { return getSelectedValue('wifi_isolate') == "enabled" ? 1 : 0;};
@@ -629,7 +630,7 @@ function saveChanges()
 			}
 
 			//preserve wan mac definition even if wan is disabled if this is a bcm94704
-			if((isBcm94704 || ramips) && (uci.get("network", "wan", "type") != "bridge"))
+			if((isBcm94704 || isRamips) && (uci.get("network", "wan", "type") != "bridge"))
 			{
 				if(uci.get("network", "wan", "macaddr") == "")
 				{
@@ -898,6 +899,10 @@ function saveChanges()
 			{
 				dnsList = nortonCSC;
 			}
+			else if(dnsSource == "quad9" && notBridge )
+			{
+				dnsList = quad9DNS;
+			}
 			else //custom
 			{
 				var dnsData = getTableDataArray(document.getElementById("lan_dns_table_container").firstChild);
@@ -1114,6 +1119,12 @@ function setGlobalVisibility()
 	{
 		currentMode=getSelectedValue('wifi_mode');
 		setAllowableSelections('wifi_mode', ['ap', 'ap+wds', 'adhoc', 'disabled'], [basicS.AcPt+' (AP)', 'AP+WDS', 'Ad Hoc', UI.Disabled]);
+		if(wirelessDriver == "")
+		{
+			removeOptionFromSelectElementByValue("wifi_mode", "ap", document);
+			removeOptionFromSelectElementByValue("wifi_mode", "ap+wds", document);
+			removeOptionFromSelectElementByValue("wifi_mode", "adhoc", document);
+		}
 		if(currentMode == 'ap+sta' || currentMode == 'sta')
 		{
 			setSelectedValue('wifi_mode', 'ap');
@@ -1124,9 +1135,14 @@ function setGlobalVisibility()
 		}
 	}
 
-	var proto1 = ['dhcp_wired', 'pppoe_wired', 'static_wired', 'dhcp_wireless', 'static_wireless'];
-	var proto2 = ['DHCP ('+basicS.Wird+')', 'PPPoE ('+basicS.Wird+')', basicS.StIP+' ('+basicS.Wird+')', 'DHCP ('+basicS.Wrlss+')', basicS.StIP+' ('+basicS.Wrlss+')'];
+	var proto1 = ['dhcp_wired', 'pppoe_wired', 'static_wired'];
+	var proto2 = ['DHCP ('+basicS.Wird+')', 'PPPoE ('+basicS.Wird+')', basicS.StIP+' ('+basicS.Wird+')'];
 
+	if(wirelessDriver)
+	{
+		proto1.push('dhcp_wireless','static_wireless');
+		proto2.push('DHCP ('+basicS.Wrlss+')',basicS.StIP+' ('+basicS.Wrlss+')');
+	}
 	if(hasUSB)
 	{
 		proto1.push('3g');
@@ -1450,6 +1466,11 @@ function setBridgeVisibility()
 	}
 
 
+	//If no wireless, disable bridge/repeater setup
+	if(wirelessDriver == "")
+	{
+		document.getElementById("global_bridge").disabled = true;
+	}
 	setAllowableSelections("bridge_hwmode",allowedbridgemodes2,allowedbridgemodes)
 
 	setHwMode(document.getElementById("bridge_hwmode"))
@@ -1770,6 +1791,10 @@ function resetData()
 	else if( dnsTableData.join(",") == googleDns.join(",") || dnsTableData.join(",") == googleDns.reverse().join(",") )
 	{
 		dnsType = "google";
+	}
+	else if( dnsTableData.join(",") == quad9DNS.join(",") || dnsTableData.join(",") == quad9DNS.reverse().join(",") )
+	{
+		dnsType = "quad9";
 	}
 	setSelectedValue("lan_dns_source", dnsType);
 	setDnsSource(document.getElementById("lan_dns_source"))
@@ -2725,6 +2750,10 @@ function parseWifiScan(rawScanOutput)
 
 function setChannelWidth(selectCtl, band)
 {
+	if(wirelessDriver == "")
+	{
+		return;
+	}
 	var chw =  getSelectedValue(selectCtl.id)
 	var hplus = chw =='HT40+';
 	var h40 = (chw == 'HT40+' || chw == 'HT40-');
@@ -2814,6 +2843,10 @@ function getSelectedWifiChannels()
 	var channels = []
 	channels["A"] = ""
 	channels["G"] = ""
+	if(wirelessDriver == "")
+	{
+		return channels;
+	}
 	if(document.getElementById("global_gateway").checked)
 	{
 		var wimode = getSelectedValue("wifi_mode")
